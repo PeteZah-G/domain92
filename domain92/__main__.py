@@ -99,24 +99,39 @@ checkprint("client initialized")
 def get_data_path():
     script_dir = os.path.dirname(__file__)
     checkprint("checking os")
-    if platform.system() == "Windows":
-        filename = os.path.join(script_dir, "data", "windows", "tesseract")
-    elif platform.system() == "Linux":
+    system = platform.system()
+    if system == "Windows":
+        filename = os.path.join(script_dir, "data", "windows", "tesseract.exe")  # Note: .exe for Windows
+    elif system == "Linux":
         filename = os.path.join(script_dir, "data", "tesseract-linux")
+    elif system == "Darwin":  # macOS
+        filename = os.path.join(script_dir, "data", "macos", "tesseract")
     else:
-        print(
-            "Unsupported OS. This could cause errors with captcha solving. Please install tesseract manually."
-        )
+        checkprint(f"Unsupported OS: {system}. Falling back to system tesseract. Install manually for full support.")
         return None
-    os.environ["TESSDATA_PREFIX"] = os.path.join(script_dir, "data")
-    return filename
+    
+    if os.path.exists(filename):
+        os.chmod(filename, 0o755)  # Ensure executable
+        checkprint(f"Using bundled tesseract: {filename}")
+        return filename
+    else:
+        checkprint(f"Bundled tesseract not found at {filename}. Falling back to system tesseract.")
+        return None
 
 path = get_data_path()
 if path:
     pytesseract.pytesseract.tesseract_cmd = path
-    checkprint(f"Using tesseract executable: {path}")
-else:
-    checkprint("No valid tesseract file for this OS.")
+
+# Set TESSDATA_PREFIX to local data/tessdata (adjust if your structure differs)
+script_dir = os.path.dirname(__file__)
+tessdata_dir = os.path.join(script_dir, "data", "tessdata")
+os.environ["TESSDATA_PREFIX"] = tessdata_dir
+checkprint(f"Set TESSDATA_PREFIX to: {tessdata_dir}")
+if not os.path.exists(tessdata_dir):
+    checkprint(f"Warning: tessdata dir not found at {tessdata_dir}. Copy .traineddata files there.")
+
+if not path:
+    checkprint("Using system tesseract. Ensure freednsocr.traineddata is in /opt/homebrew/share/tessdata/ for macOS.")
 
 domainlist = []
 domainnames = []
@@ -302,20 +317,28 @@ def denoise(img):
                 newimgarr[x, y] = (255, 255, 255)
     return newimg
 
-def solve(image):
-    image = denoise(image)
-    text = pytesseract.image_to_string(
-        image.filter(ImageFilter.GaussianBlur(1))
-        .convert("1")
-        .filter(ImageFilter.RankFilter(3, 3)),
-        config="-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 13 -l freednsocr",
-    )
-    text = text.strip().upper()
-    checkprint("captcha solved: " + text)
-    if len(text) != 5 and len(text) != 4:
-        checkprint("captcha doesn't match correct pattern, trying different captcha")
-        text = solve(getcaptcha())
-    return text
+def solve(image, lang='freednsocr'):
+    try:
+        image = denoise(image)
+        text = pytesseract.image_to_string(
+            image.filter(ImageFilter.GaussianBlur(1))
+            .convert("1")
+            .filter(ImageFilter.RankFilter(3, 3)),
+            config=f"-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 13 -l {lang}",
+        )
+        text = text.strip().upper()
+        checkprint(f"captcha solved with {lang}: " + text)
+        if len(text) != 5 and len(text) != 4:
+            checkprint("captcha doesn't match correct pattern, trying different captcha")
+            return solve(getcaptcha(), lang)
+        return text
+    except Exception as e:
+        checkprint(f"Tesseract error with {lang}: {repr(e)}. Falling back to manual input.")
+        if lang == 'eng':  # If English also fails, force manual
+            raise
+        # Retry with fallback language 'eng'
+        checkprint("Retrying with English language...")
+        return solve(image, 'eng')
 
 def generate_random_string(length):
     letters = string.ascii_lowercase + string.digits
@@ -538,8 +561,6 @@ def init():
                         args.use_tor = True
                     case "n":
                         pass
-    # Removed incorrect assignment: args.proxy = False
-    # Keep args.proxy as "none" or a valid proxy URL string
 
     if not args.outfile:
         args.outfile = (
