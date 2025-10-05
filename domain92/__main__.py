@@ -18,6 +18,19 @@ from importlib.metadata import version
 import lolpython
 import time
 
+# List of realistic user agents for randomization
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:129.0) Gecko/20100101 Firefox/129.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+]
+
+def get_random_user_agent():
+    """Return a random user agent from the USER_AGENTS list."""
+    return random.choice(USER_AGENTS)
+
 parser = argparse.ArgumentParser(
     description="Automatically creates links for an ip on freedns"
 )
@@ -74,17 +87,14 @@ if not args.silent:
     print("made with <3 by Cbass92")
     time.sleep(1)
 
-
 def checkprint(input):
     global args
     if not args.silent:
         print(input)
 
-
 client = freedns.Client()
 
 checkprint("client initialized")
-
 
 def get_data_path():
     script_dir = os.path.dirname(__file__)
@@ -94,16 +104,17 @@ def get_data_path():
     elif platform.system() == "Linux":
         filename = os.path.join(script_dir, "data", "tesseract-linux")
     else:
-        print("Unsupported OS. This could cause errors with captcha solving.")
+        print(
+            "Unsupported OS. This could cause errors with captcha solving. Please install tesseract manually."
+        )
         return None
     os.environ["TESSDATA_PREFIX"] = os.path.join(script_dir, "data")
     return filename
 
-
 path = get_data_path()
 if path:
     pytesseract.pytesseract.tesseract_cmd = path
-    checkprint(f"Using tesseract data file: {path}")
+    checkprint(f"Using tesseract executable: {path}")
 else:
     checkprint("No valid tesseract file for this OS.")
 
@@ -114,7 +125,6 @@ iplist = req.get(
     "https://raw.githubusercontent.com/sebastian-92/byod-ip/refs/heads/master/byod.json"
 ).text
 iplist = eval(iplist)
-
 
 def getpagelist(arg):
     arg = arg.strip()
@@ -152,7 +162,6 @@ def getpagelist(arg):
     else:
         return [int(arg)]
 
-
 def getdomains(arg):
     global domainlist, domainnames
     for sp in getpagelist(arg):
@@ -173,24 +182,18 @@ def getdomains(arg):
                 "Sec-Fetch-Mode": "navigate",
                 "Sec-Fetch-Site": "none",
                 "Upgrade-Insecure-Requests": "1",
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                "User-Agent": get_random_user_agent(),
                 "sec-ch-ua": '"Not;A=Brand";v="24", "Chromium";v="128"',
                 "sec-ch-ua-platform": "Linux",
             },
         ).text
-        pattern = r"<a href=/subdomain/edit\.php\?edit_domain_id=\d+>([\w.-]+)</a>.*?<td>public</td>"
-        domainnames.extend(re.findall(pattern, html))
-        pattern = r"<a href=/subdomain/edit\.php\?edit_domain_id=(\d+)>([\w.-]+)</a>.*?<td>public</td>"
+        pattern = r"<a href=\/subdomain\/edit\.php\?edit_domain_id=(\d+)>([\w.-]+)<\/a>(.+\..+)<td>public<\/td>"
         matches = re.findall(pattern, html)
+        domainnames.extend([match[1] for match in matches])
         domainlist.extend([match[0] for match in matches])
-        sp = sp + 1
-
 
 def find_domain_id(domain_name):
-    found = False
     page = 1
-    names = []
-    ids = []
     html = req.get(
         "https://freedns.afraid.org/domain/registry/?page="
         + str(page)
@@ -208,24 +211,18 @@ def find_domain_id(domain_name):
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Upgrade-Insecure-Requests": "1",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": get_random_user_agent(),
             "sec-ch-ua": '"Not;A=Brand";v="24", "Chromium";v="128"',
             "sec-ch-ua-platform": "Linux",
         },
     ).text
-    pattern = r"<a href=/subdomain/edit\.php\?edit_domain_id=\d+>([\w.-]+)</a>.*?<td>public</td>"
-    names.extend(re.findall(pattern, html))
     pattern = r"<a href=\/subdomain\/edit\.php\?edit_domain_id=([0-9]+)><font color=red>(?:.+\..+)<\/font><\/a>"
     matches = re.findall(pattern, html)
-    ids.extend([match[0] for match in matches])
-    if len(ids) > 0:
-        found = True
-        checkprint(f"Found domain ID: {ids[0]}")
+    if len(matches) > 0:
+        checkprint(f"Found domain ID: {matches[0]}")
     else:
         raise Exception("Domain ID not found")
-    return ids[0]
-
-
+    return matches[0]
 
 hookbool = False
 webhook = ""
@@ -234,10 +231,8 @@ if args.subdomains != "random":
     checkprint(args.subdomains.split(","))
 checkprint("ready")
 
-
 def getcaptcha():
     return Image.open(BytesIO(client.get_captcha()))
-
 
 def denoise(img):
     imgarr = img.load()
@@ -307,45 +302,24 @@ def denoise(img):
                 newimgarr[x, y] = (255, 255, 255)
     return newimg
 
-
 def solve(image):
     image = denoise(image)
     text = pytesseract.image_to_string(
         image.filter(ImageFilter.GaussianBlur(1))
         .convert("1")
         .filter(ImageFilter.RankFilter(3, 3)),
-        config="-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 7",
+        config="-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 13 -l freednsocr",
     )
-    text = re.sub(r"[^A-Z]", "", text)
-    checkprint("got text: " + text)
+    text = text.strip().upper()
+    checkprint("captcha solved: " + text)
     if len(text) != 5 and len(text) != 4:
-        checkprint("Retrying with different filters")
-        text = pytesseract.image_to_string(
-            image.filter(ImageFilter.GaussianBlur(2)).filter(
-                ImageFilter.MedianFilter(3)
-            ),
-            config="-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 8",
-        )
-        text = re.sub(r"[^A-Za-z]", "", text)
-        checkprint("got text: " + text)
-    if len(text) != 5 and len(text) != 4:
-        checkprint("Retrying with different filters")
-        text = pytesseract.image_to_string(
-            image,
-            config="-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ --psm 8",
-        )
-        text = re.sub(r"[^A-Za-z]", "", text)
-        checkprint("got text: " + text)
-    if len(text) != 5 and len(text) != 4:
-        checkprint("trying different captcha")
+        checkprint("captcha doesn't match correct pattern, trying different captcha")
         text = solve(getcaptcha())
     return text
 
-
 def generate_random_string(length):
-    letters = string.ascii_lowercase
+    letters = string.ascii_lowercase + string.digits
     return "".join(random.choice(letters) for i in range(length))
-
 
 def login():
     while True:
@@ -364,16 +338,16 @@ def login():
                 "https://api.guerrillamail.com/ajax.php?f=get_email_address"
             ).json()
             email = stuff["email_addr"]
-            checkprint("email address generated email:" + email)
-            checkprint(email)
+            checkprint("email address generated: " + email)
             checkprint("creating account")
             username = generate_random_string(13)
+            password = generate_random_string(13)  # Generate random password
             client.create_account(
                 capcha,
                 generate_random_string(13),
                 generate_random_string(13),
                 username,
-                "pegleg1234",
+                password,
                 email,
             )
             checkprint("activation email sent")
@@ -399,18 +373,17 @@ def login():
                         checkprint("verification code: " + match.group(1))
                         checkprint("activating account")
                         client.activate_account(match.group(1))
-                        checkprint("accout activated")
+                        checkprint("account activated")
                         time.sleep(1)
                         checkprint("attempting login")
-                        client.login(email, "pegleg1234")
+                        client.login(email, password)
                         checkprint("login successful")
                         hasnotreceived = False
                     else:
                         checkprint(
-                            "no match in email! you should generally never get this."
+                            "no match in email! This is unusual and may indicate an issue."
                         )
                         checkprint("error!")
-
                 else:
                     checkprint("checked email")
                     time.sleep(2)
@@ -436,7 +409,6 @@ def login():
         else:
             break
 
-
 def createlinks(number):
     for i in range(number):
         if i % 5 == 0:
@@ -457,18 +429,6 @@ def createlinks(number):
                     args.use_tor = False
             login()
         createdomain()
-
-
-def createmax():
-    login()
-    checkprint("logged in")
-    checkprint("creating domains")
-    createdomain()
-    createdomain()
-    createdomain()
-    createdomain()
-    createdomain()
-
 
 def createdomain():
     while True:
@@ -491,21 +451,11 @@ def createdomain():
             else:
                 subdomainy = random.choice(args.subdomains.split(","))
             client.create_subdomain(capcha, args.type, subdomainy, random_domain_id, ip)
-            tld = args.single_tld or domainnames[domainlist.index(int(random_domain_id))]
+            tld = args.single_tld or domainnames[domainlist.index(random_domain_id)]
             checkprint("domain created")
-            checkprint(
-                "link: http://"
-                + subdomainy
-                + "."
-                + tld
-            )
+            checkprint("link: http://" + subdomainy + "." + tld)
             domainsdb = open(args.outfile, "a")
-            domainsdb.write(
-                "\nhttp://"
-                + subdomainy
-                + "."
-                + tld
-            )
+            domainsdb.write("\nhttp://" + subdomainy + "." + tld)
             domainsdb.close()
             if hookbool:
                 checkprint("notifying webhook")
@@ -522,7 +472,6 @@ def createdomain():
                 )
                 checkprint("webhook notified")
         except KeyboardInterrupt:
-            # quit
             sys.exit()
         except Exception as e:
             checkprint("Got error while creating domain: " + repr(e))
@@ -530,15 +479,12 @@ def createdomain():
         else:
             break
 
-
 non_random_domain_id = None
-
 
 def finddomains(pagearg):
     pages = pagearg.split(",")
     for page in pages:
         getdomains(page)
-
 
 def init():
     global args, ip, iplist, webhook, hookbool, non_random_domain_id
@@ -549,9 +495,9 @@ def init():
                 ip = input("Enter the custom IP: ")
             case _:
                 ip = iplist[chosen]
-        args.ip = ip  # Assign the chosen/entered IP back to args
+        args.ip = ip
     else:
-        ip = args.ip  # Ensure ip variable is set even if provided via CLI
+        ip = args.ip
     if not args.pages:
         args.pages = (
             input(
@@ -565,20 +511,20 @@ def init():
             case "y":
                 hookbool = True
                 webhook = input("Enter the webhook URL: ")
-                args.webhook = webhook  # Assign entered webhook back to args
+                args.webhook = webhook
             case "n":
                 hookbool = False
-                args.webhook = "none"  # Explicitly set to none if declined
+                args.webhook = "none"
     else:
         if args.webhook.lower() == "none":
             hookbool = False
         else:
             hookbool = True
-            webhook = args.webhook  # Ensure webhook variable is set
+            webhook = args.webhook
 
     if (not args.proxy) and (
         not args.use_tor
-    ):  # Only ask if neither proxy nor tor is set
+    ):
         match input("Do you want to use a proxy? (y/n) ").lower():
             case "y":
                 args.proxy = input(
@@ -591,9 +537,9 @@ def init():
                     case "y":
                         args.use_tor = True
                     case "n":
-                        pass  # Neither proxy nor Tor selected
+                        pass
     if args.proxy == "none":
-        args.proxy == False
+        args.proxy = False
 
     if not args.outfile:
         args.outfile = (
@@ -623,7 +569,7 @@ def init():
                 )
             case "y":
                 pass
-            
+
     if not args.number:
         num_links_input = input("Enter the number of links to create: ")
         try:
@@ -663,8 +609,6 @@ def init():
 
     if args.number:
         createlinks(args.number)
-    
-
 
 def chooseFrom(dictionary, message):
     checkprint(message)
@@ -672,7 +616,6 @@ def chooseFrom(dictionary, message):
         checkprint(f"{i+1}. {key}")
     choice = int(input("Choose an option by number: "))
     return list(dictionary.keys())[choice - 1]
-
 
 if __name__ == "__main__":
     init()
