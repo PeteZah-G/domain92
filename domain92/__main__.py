@@ -538,8 +538,8 @@ def init():
                         args.use_tor = True
                     case "n":
                         pass
-    if args.proxy == "none":
-        args.proxy = False
+    # Removed incorrect assignment: args.proxy = False
+    # Keep args.proxy as "none" or a valid proxy URL string
 
     if not args.outfile:
         args.outfile = (
